@@ -1,5 +1,8 @@
 import hashlib
-import tkinter as tk
+from math import floor
+
+import ttkbootstrap as ttk
+from ttkbootstrap.constants import *
 from tkinter import messagebox
 import mysql.connector
 from flask import Flask, redirect
@@ -20,9 +23,9 @@ def connect_db():
     return conn
 
 
-def hash_url(original_url):
+def hash_url(original_url, length_of_url):
     # Use hashlib to create a short URL
-    short_url = hashlib.md5(original_url.encode()).hexdigest()[:6]  # Get first 6 characters
+    short_url = hashlib.md5(original_url.encode()).hexdigest()[:length_of_url]  # Get first N characters
     return short_url
 
 
@@ -38,7 +41,6 @@ def save_url(original_url, short_url):
         else:
             cursor.execute("INSERT INTO urls (long_url, short_url) VALUES (%s, %s)", (original_url, short_url))
             conn.commit()
-            messagebox.showinfo("Success", f"Short URL: {short_url}")
     except Exception as e:
         messagebox.showerror("Error", f"Could not save URL: {str(e)}")
     finally:
@@ -63,10 +65,10 @@ def get_long_url(short_url):
         conn.close()
 
 
-def shorten_url(original_url):
-    short_code = hash_url(original_url)  # Simple numeric code
+def shorten_url(original_url, length_of_url):
+    short_code = hash_url(original_url, length_of_url)  # Simple numeric code
     save_url(original_url, short_code)
-    return f'http://127.0.0.1:7001/{short_code}'
+    return f'http://127.0.0.1:8000/{short_code}'
 
 
 @app.route('/<short_code>')
@@ -82,43 +84,59 @@ def redirect_to_url(short_code):
 
 
 def run_flask():
-    app.run(debug=False, use_reloader=False, port=7001)
+    app.run(debug=False, use_reloader=False, port=8000)
+
 
 # Tkinter GUI
-
 def create_gui():
     # Create the main window
-    window = tk.Tk()
+    window = ttk.Window(themename="superhero")
     window.title("URL Shortener")
+    window.geometry("500x200")
 
     # Label for instructions
-    tk.Label(window, text="Enter a URL to shorten:").pack(pady=10)
+    ttk.Label(window, text="Enter a URL to shorten:", font=("Helvetica", 22), bootstyle=DANGER).pack(pady=10)
 
     # Entry widget to input URL
-    url_entry = tk.Entry(window, width=50)
+    url_entry = ttk.Entry(window, width=50)
     url_entry.pack(pady=10)
+
+    def slider(e):
+        length_label.config(text=f"{floor(length_scale.get())}")
 
     # Function to handle URL shortening
     def on_shorten_button_click():
         original_url = url_entry.get()
+        length_of_url = floor(length_scale.get())
+
         if original_url:
             # Generate short URL
-            short_url = shorten_url(original_url)
+            short_url = shorten_url(original_url, length_of_url)
             messagebox.showinfo("Shortened URL", f"Your shortened URL is: {short_url}")
         else:
             messagebox.showwarning("Input Error", "Please enter a valid URL.")
 
+    ttk.Label(text="Length of URL address:", bootstyle=INFO).pack(pady=5)
+
+    # Scale to adjust the length of the shortened code
+    length_scale = ttk.Scale(window, length=5, from_=5, to=10, value=5, command=slider)
+    length_scale.pack()
+
+    length_label = ttk.Label(window, text=f"{length_scale.get()}")
+    length_label.pack()
+
     # Button to shorten URL
-    shorten_button = tk.Button(window, text="Shorten URL", command=on_shorten_button_click)
+    shorten_button = ttk.Button(window, text="Shorten URL", command=on_shorten_button_click)
     shorten_button.pack(pady=10)
 
     # Run the GUI application
     window.mainloop()
 
 
-# Run the Flask app in a separate thread
-thread = threading.Thread(target=run_flask)
-thread.start()
+if __name__ == "__main__":
+    # Run the Flask app in a separate thread
+    thread = threading.Thread(target=run_flask)
+    thread.start()
 
-# Start the Tkinter GUI
-create_gui()
+    # Start the Tkinter GUI
+    create_gui()
