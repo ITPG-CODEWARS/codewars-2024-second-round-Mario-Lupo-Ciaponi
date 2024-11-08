@@ -11,9 +11,16 @@ import threading
 import pyperclip
 import pyqrcode
 import png
+import re
 
 # Flask app for URL redirection
 app = Flask(__name__)
+
+REGEX_FOR_VALIDATING_URL = (r"(https:\/\/www\.|http:\/\/www\.|https:\/\/|http:\/\/)?[a-zA-Z]{2,}(\.[a-zA-Z]{2,})"
+                            r"(\.[a-zA-Z]{2,})?\/[a-zA-Z0-9]{2,}|((https:\/\/www\.|http:\/\/www\.|https:\/\/|http:\/\/)"
+                            r"?[a-zA-Z]{2,}(\.[a-zA-Z]{2,})(\.[a-zA-Z]{2,})?)|(https:\/\/www\.|http:\/\/www\.|https:\/\
+                            /|http:\/\/)?[a-zA-Z0-9]{2,}\.[a-zA-Z0-9]{2,}\.[a-zA-Z0-9]{2,}(\.[a-zA-Z0-9]{2,})?")
+
 
 def connect_db():
     conn = mysql.connector.connect(
@@ -50,6 +57,7 @@ def save_url(original_url, short_url):
         cursor.close()
         conn.close()
 
+
 def get_long_url(short_url):
     conn = connect_db()
     cursor = conn.cursor()
@@ -65,11 +73,13 @@ def get_long_url(short_url):
         cursor.close()
         conn.close()
 
+
 def shorten_url(original_url, length_of_url, custom_code=None):
     # Use the custom code if provided; otherwise, generate a hashed short URL
     short_code = custom_code if custom_code else hash_url(original_url, length_of_url)
     save_url(original_url, short_code)
     return f'http://127.0.0.1:9000/{short_code}'
+
 
 @app.route('/<short_code>')
 def redirect_to_url(short_code):
@@ -80,14 +90,16 @@ def redirect_to_url(short_code):
         return redirect(original_url)
     return 'Shortened URL not found!', 404
 
+
 def run_flask():
     app.run(debug=False, use_reloader=False, port=9000)
+
 
 # Tkinter GUI
 def create_gui():
     window = ttk.Window(themename="superhero")
     window.title("URL Shortener")
-    window.geometry("500x400")
+    window.geometry("500x383")
 
     ttk.Label(window, text="Enter a URL to shorten:", font=("Helvetica", 22), bootstyle=DANGER).pack(pady=10)
     url_entry = ttk.Entry(window, width=50)
@@ -124,10 +136,11 @@ def create_gui():
 
     def on_shorten_button_click():
         original_url = url_entry.get()
-        custom_code = custom_code_entry.get().strip()
-        length_of_url = floor(length_scale.get())
 
-        if original_url:
+        if re.search(REGEX_FOR_VALIDATING_URL, original_url):  # Check if the URL given is valid
+            custom_code = custom_code_entry.get().strip()
+            length_of_url = floor(length_scale.get())
+
             global generated_short_url
 
             # Check if the custom code is already in use
@@ -143,18 +156,20 @@ def create_gui():
             if Messagebox.yesno("QR Code", "Would you like to generate a QR code of the URL?") == "Yes":
                 create_qr_code(generated_short_url)
             else:
-                window.geometry("500x400")
+                window.geometry("500x383")
         else:
             Messagebox.ok("Input Error", "Please enter a valid URL.")
 
     ttk.Label(window, text="Length of URL address:", bootstyle=INFO).pack(pady=5)
-    length_scale = ttk.Scale(window, length=200, from_=5, to=10, value=5, bootstyle=INFO, command=slider)
+
+    length_scale = ttk.Scale(window, length=50, from_=5, to=10, value=5, bootstyle=INFO, command=slider)
     length_scale.pack()
+
     length_label = ttk.Label(window, text=f"{length_scale.get()}")
     length_label.pack()
 
     shorten_button = ttk.Button(window, text="Shorten URL", command=on_shorten_button_click)
-    shorten_button.pack(pady=10)
+    shorten_button.pack(pady=20)
 
     global short_url_label, generated_short_url
     generated_short_url = ""
