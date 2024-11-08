@@ -114,7 +114,7 @@ def create_gui():
     """
     window = ttk.Window(themename="superhero")
     window.title("URL Shortener")
-    window.geometry("500x383")
+    window.geometry("500x500")
 
     ttk.Label(window, text="Enter a URL to shorten:", font=("Helvetica", 22), bootstyle=DANGER).pack(pady=10)
     url_entry = ttk.Entry(window, width=50)
@@ -140,6 +140,55 @@ def create_gui():
         else:
             Messagebox.ok("Copy Error", "No URL to copy. Please shorten a URL first.")
 
+
+    def create_qr_code(short_url):
+        """
+        Firstly, it asks where do you want to save it(save as),
+        then it generates a qr code at the bottom of the app
+        """
+        input_path = filedialog.asksaveasfilename(title="Save Image",
+                                                  filetypes=(("PNG File", ".png"), ("All Files", "*.*")))
+        if input_path:
+            if not input_path.endswith(".png"):
+                input_path += ".png"
+
+            get_code = pyqrcode.create(short_url)
+            get_code.png(input_path, scale=5)
+
+            global get_image
+            get_image = ImageTk.PhotoImage(Image.open(input_path))
+            qr_code_label.config(image=get_image)
+            window.geometry("500x750")
+
+    def delete_url(url):
+        if url and re.search(REGEX_FOR_VALIDATING_URL, url):
+            connection = connect_db()
+            cursor = connection.cursor()
+
+            try:
+                # Check if the URL exists in the database
+                cursor.execute("SELECT * FROM urls WHERE long_url = %s", (url,))
+                record = cursor.fetchone()
+
+                if record:
+                    # URL found, proceed with deletion
+                    cursor.execute("DELETE FROM urls WHERE long_url = %s", (url,))
+                    connection.commit()  # Commit the deletion
+                    Messagebox.ok("URL deleted successfully!", "Success")
+                else:
+                    # URL not found in the records
+                    Messagebox.ok("No URL found in the records!", "Error")
+
+            except Exception as e:
+                Messagebox.ok(f"Error while deleting URL: {str(e)}", "Error")
+
+            finally:
+                # Ensure both cursor and connection are closed
+                cursor.close()
+                connection.close()
+        else:
+            Messagebox.ok("Invalid URL format. Please enter a valid URL.", "Error")
+
     def show_urls():
         """
         It shows all the URLS in the database.
@@ -163,24 +212,22 @@ def create_gui():
                                           f"Date of creation: {row[3]}",
                       font=("Helvetica", 13), bootstyle=PRIMARY).pack(pady=10, padx=25)
 
-    def create_qr_code(short_url):
-        """
-        Firstly, it asks where do you want to save it(save as),
-        then it generates a qr code at the bottom of the app
-        """
-        input_path = filedialog.asksaveasfilename(title="Save Image",
-                                                  filetypes=(("PNG File", ".png"), ("All Files", "*.*")))
-        if input_path:
-            if not input_path.endswith(".png"):
-                input_path += ".png"
+    def show_user_panel():
+        panel_window = Toplevel()
+        panel_window.title("User panel")
+        panel_window.geometry("300x220")
 
-            get_code = pyqrcode.create(short_url)
-            get_code.png(input_path, scale=5)
+        ttk.Label(panel_window, text="User panel", font=("Helvetica", 20, "bold"), bootstyle=DANGER).pack(pady=20)
 
-            global get_image
-            get_image = ImageTk.PhotoImage(Image.open(input_path))
-            qr_code_label.config(image=get_image)
-            window.geometry("500x750")
+        delete_url_entry = ttk.Entry(panel_window, bootstyle=INFO, width=30)
+        delete_url_entry.pack(pady=10)
+
+        delete_url_button = ttk.Button(panel_window, text="DELETE", bootstyle=DANGER,
+                                       command=lambda: delete_url(delete_url_entry.get()))
+        delete_url_button.pack()
+
+        panel_preview_button = ttk.Button(panel_window, text="Preview", bootstyle=INFO, command=show_urls)
+        panel_preview_button.pack(pady=20)
 
     def on_shorten_button_click():
         """
@@ -196,7 +243,7 @@ def create_gui():
 
             # Check if the custom code is already in use
             if custom_code and get_long_url(custom_code):
-                Messagebox.ok("Custom Code Error", "This custom code is already in use. Please choose another.")
+                Messagebox.show_error("Custom Code Error", "This custom code is already in use. Please choose another.")
                 return
 
             # Generate short URL using custom code if provided, otherwise generate a hashed short URL
@@ -207,9 +254,9 @@ def create_gui():
             if Messagebox.yesno("QR Code", "Would you like to generate a QR code of the URL?") == "Yes":
                 create_qr_code(generated_short_url)
             else:
-                window.geometry("500x383")
+                window.geometry("500x500")
         else:
-            Messagebox.ok("Input Error", "Please enter a valid URL.")
+            Messagebox.show_error("Input Error", "Please enter a valid URL.")
 
     ttk.Label(window, text="Length of URL address:", bootstyle=INFO).pack(pady=5)
 
@@ -233,6 +280,9 @@ def create_gui():
 
     preview_button = ttk.Button(window, text="Preview", bootstyle=INFO, command=show_urls)
     preview_button.pack(pady=20)
+
+    user_panel_button = ttk.Button(window, text="User panel", bootstyle=INFO, command=show_user_panel)
+    user_panel_button.pack()
 
     qr_code_label = ttk.Label(window, text="")
     qr_code_label.pack(pady=20)
