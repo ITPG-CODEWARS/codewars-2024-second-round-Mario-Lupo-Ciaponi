@@ -1,4 +1,5 @@
 import hashlib
+from datetime import datetime
 from math import floor
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
@@ -13,6 +14,8 @@ import pyperclip
 import pyqrcode
 import png
 import re
+from tkcalendar import Calendar
+
 
 
 # Flask app for URL redirection
@@ -45,7 +48,7 @@ def hash_url(original_url, length_of_url):
     return hashlib.md5(original_url.encode()).hexdigest()[:length_of_url]  # The value of the slider (length_of_url)
 
 
-def save_url(original_url, short_url, max_uses=None):
+def save_url(original_url, short_url, max_uses=None, due_date=None):
     conn = connect_db()
     cursor = conn.cursor()
 
@@ -60,10 +63,11 @@ def save_url(original_url, short_url, max_uses=None):
             if max_uses is None:
                 max_uses = 0  # Unlimited uses by default
 
+            # Insert the URL with the optional due_date
             cursor.execute(
-                "INSERT INTO urls (long_url, short_url, date_of_creation, number_of_uses, max_uses) "
-                "VALUES (%s, %s, NOW(), 0, %s)",
-                (original_url, short_url, max_uses)
+                "INSERT INTO urls (long_url, short_url, date_of_creation, number_of_uses, max_uses, due_date) "
+                "VALUES (%s, %s, NOW(), 0, %s, %s)",
+                (original_url, short_url, max_uses, due_date)
             )
             conn.commit()
             return short_url
@@ -72,6 +76,7 @@ def save_url(original_url, short_url, max_uses=None):
     finally:
         cursor.close()
         conn.close()
+
 
 
 def get_long_url(short_url):
@@ -91,7 +96,7 @@ def get_long_url(short_url):
         conn.close()
 
 
-def shorten_url(original_url, length_of_url, custom_code=None, max_uses=None):
+def shorten_url(original_url, length_of_url, custom_code=None, max_uses=None, due_date=None):
     conn = connect_db()
     cursor = conn.cursor()
 
@@ -109,8 +114,8 @@ def shorten_url(original_url, length_of_url, custom_code=None, max_uses=None):
         # If the URL does not exist, create a new short URL
         short_code = custom_code if custom_code else hash_url(original_url, length_of_url)
 
-        # Save the new URL and short code to the database with max_uses
-        save_url(original_url, short_code, max_uses)
+        # Save the new URL and short code to the database with max_uses and due_date
+        save_url(original_url, short_code, max_uses, due_date)
 
         return f'http://127.0.0.1:9000/{short_code}'
 
@@ -120,6 +125,7 @@ def shorten_url(original_url, length_of_url, custom_code=None, max_uses=None):
     finally:
         cursor.close()
         conn.close()
+
 
 
 @app.route('/<short_code>')
@@ -133,11 +139,15 @@ def redirect_to_url(short_code):
         connection = connect_db()
         cursor = connection.cursor()
 
-        cursor.execute("SELECT number_of_uses, max_uses FROM urls WHERE short_url = %s", (short_code,))
+        cursor.execute("SELECT number_of_uses, max_uses, due_date FROM urls WHERE short_url = %s", (short_code,))
         result = cursor.fetchone()
 
         if result:
-            number_of_uses, max_uses = result
+            number_of_uses, max_uses, due_date = result
+            # Check if the URL has expired
+            if due_date and datetime.now() > due_date:
+                return "This shortened URL has expired.", 403
+
             if max_uses != 0 and number_of_uses >= max_uses:
                 return "This shortened URL has reached its maximum number of uses.", 403
 
@@ -147,6 +157,8 @@ def redirect_to_url(short_code):
             return redirect(original_url)
 
     return 'Shortened URL not found!', 404
+
+
 
 
 def run_flask():
@@ -160,7 +172,7 @@ def create_gui():
     """
     window = ttk.Window(themename="superhero")
     window.title("URL Shortener")
-    window.geometry("500x555")
+    window.geometry("500x650")
 
     ttk.Label(window, text="Enter a URL to shorten:", font=("Helvetica", 22), bootstyle=DANGER).pack(pady=10)
     url_entry = ttk.Entry(window, width=50)
@@ -169,6 +181,10 @@ def create_gui():
     ttk.Label(window, text="Custom Short Code (Optional):", bootstyle=INFO).pack(pady=5)
     custom_code_entry = ttk.Entry(window, width=50)
     custom_code_entry.pack(pady=5)
+
+    ttk.Label(window, text="Due Date (Optional):", bootstyle=ttk.INFO).pack(pady=5)
+    due_date_entry = ttk.Entry(window, width=50)
+    due_date_entry.pack(pady=10)
 
     def slider(e):
         """
@@ -185,7 +201,6 @@ def create_gui():
             Messagebox.ok("Copied", "Short URL copied to clipboard!")
         else:
             Messagebox.ok("Copy Error", "No URL to copy. Please shorten a URL first.")
-
 
     def create_qr_code(short_url):
         """
@@ -252,12 +267,14 @@ def create_gui():
         ttk.Label(second_window, text="URLS:", font=("Helvetica", 20, "bold"), bootstyle=DANGER).pack(pady=17)
 
         for row in records:
-            original_url, short_code, date_of_creation, number_of_uses = row[1:]
+            original_url, short_code, date_of_creation, number_of_uses, max_uses, date_of_experiment = row[1:]
 
             ttk.Label(second_window, text=f"Original URl: {original_url} | "
                                           f"Shortened URL: http://127.0.0.1:9000/{short_code} | "
                                           f"Date of creation: {date_of_creation} | "
-                                          f"Number of uses: {number_of_uses}",
+                                          f"Due date: {date_of_experiment}"
+                                          f"Number of uses: {number_of_uses} | "
+                                          f"Max nuber of uses: {max_uses if max_uses else 'Unlimited'}",
                       font=("Helvetica", 13), bootstyle=PRIMARY).pack(pady=10, padx=25)
 
     def edit_short_code(original_url, new_short_code):
@@ -305,7 +322,7 @@ def create_gui():
     def show_user_panel():
         panel_window = Toplevel()
         panel_window.title("User Panel")
-        panel_window.geometry("400x300")
+        panel_window.geometry("500x300")
 
         ttk.Label(panel_window, text="User Panel", font=("Helvetica", 20, "bold"), bootstyle=DANGER).pack(pady=20)
 
@@ -335,41 +352,53 @@ def create_gui():
 
     def on_shorten_button_click():
         """
-        Generates a short URL after checking if the URL is valid.
+        Generates a short URL after checking if the URL is valid and includes a due date if provided.
         """
         original_url = url_entry.get()
 
-        max_uses_input = max_uses_entry.get().strip()
+        # Check if the entered URL is valid
+        if not original_url:
+            Messagebox.show_error("Input Error", "Please enter a valid URL.")
+            return
 
+        # Get the due date from the Entry widget (validate the date format)
+        due_date_str = due_date_entry.get()  # Get input as a string
+        due_date = None
+
+        # Validate if the date is entered in the correct format (YYYY-MM-DD)
+        try:
+            if due_date_str:
+                due_date = datetime.strptime(due_date_str, "%Y-%m-%d")
+            else:
+                due_date = None
+        except ValueError:
+            Messagebox.show_error("Date Format Error", "Please enter a valid date (YYYY-MM-DD).")
+            return
+
+        # Now handle max uses (if applicable)
+        max_uses_input = max_uses_entry.get().strip()
         if max_uses_input and not max_uses_input.isdigit():
             Messagebox.show_error("Input Error", "Please enter a valid number for max uses.")
             return
 
         max_uses = int(max_uses_input) if max_uses_input else None
 
-        if re.search(REGEX_FOR_VALIDATING_URL, original_url):  # Check if the URL given is valid
-            custom_code = custom_code_entry.get().strip()
-            length_of_url = floor(length_scale.get())
+        # Generate short URL using custom code if provided, otherwise generate a hashed short URL
+        custom_code = custom_code_entry.get().strip()
+        length_of_url = floor(length_scale.get())
 
-            global generated_short_url
+        # Generate the shortened URL using the shorten_url function
+        global generated_short_url
+        generated_short_url = shorten_url(original_url, length_of_url, custom_code if custom_code else None,
+                                          max_uses, due_date)
 
-            # Check if the custom code is already in use
-            if custom_code and get_long_url(custom_code):
-                Messagebox.show_error("Custom Code Error", "This custom code is already in use. Please choose another.")
-                return
+        short_url_label.config(text=f"Short URL: {generated_short_url}")
 
-            # Generate short URL using custom code if provided, otherwise generate a hashed short URL
-            generated_short_url = shorten_url(original_url, length_of_url, custom_code if custom_code else None,
-                                              max_uses)
-            short_url_label.config(text=f"Short URL: {generated_short_url}")
-
-            # Ask to generate a QR code
-            if Messagebox.yesno("QR Code", "Would you like to generate a QR code of the URL?") == "Yes":
-                create_qr_code(generated_short_url)
-            else:
-                window.geometry("500x525")
+        # Ask to generate a QR code
+        if Messagebox.yesno("QR Code", "Would you like to generate a QR code of the URL?") == "Yes":
+            create_qr_code(generated_short_url)
         else:
-            Messagebox.show_error("Input Error", "Please enter a valid URL.")
+            window.geometry("500x650")
 
     ttk.Label(window, text="Length of URL address:", bootstyle=INFO).pack(pady=5)
 
