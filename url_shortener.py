@@ -56,7 +56,7 @@ def save_url(original_url, short_url):
         if result:
             return result[1]
         else:
-            cursor.execute("INSERT INTO urls (long_url, short_url, date_of_creation) VALUES (%s, %s, NOW())",
+            cursor.execute("INSERT INTO urls (long_url, short_url, date_of_creation, number_of_uses) VALUES (%s, %s, NOW(), 0)",
                            (original_url, short_url))
             conn.commit()
             return short_url
@@ -85,10 +85,35 @@ def get_long_url(short_url):
 
 
 def shorten_url(original_url, length_of_url, custom_code=None):
-    # Use the custom code if provided; otherwise, generate a hashed short URL
-    short_code = custom_code if custom_code else hash_url(original_url, length_of_url)
-    save_url(original_url, short_code)
-    return f'http://127.0.0.1:9000/{short_code}'
+    # Connect to the database
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    try:
+        # Check if the original URL already exists in the database
+        cursor.execute("SELECT short_url FROM urls WHERE long_url = %s", (original_url,))
+        result = cursor.fetchone()
+
+        # If the URL exists, return the existing short URL
+        if result:
+            existing_short_url = result[0]
+            Messagebox.ok("URL already exists!", f"Short URL: http://127.0.0.1:9000/{existing_short_url}")
+            return f'http://127.0.0.1:9000/{existing_short_url}'
+
+        # If the URL does not exist, create a new short URL
+        short_code = custom_code if custom_code else hash_url(original_url, length_of_url)
+
+        # Save the new URL and short code to the database
+        save_url(original_url, short_code)
+
+        return f'http://127.0.0.1:9000/{short_code}'
+
+    except Exception as e:
+        Messagebox.ok("Error", f"Error while shortening URL: {str(e)}")
+
+    finally:
+        cursor.close()
+        conn.close()
 
 
 @app.route('/<short_code>')
@@ -99,6 +124,11 @@ def redirect_to_url(short_code):
     original_url = get_long_url(short_code)
 
     if original_url:
+        connection = connect_db()
+        cursor = connection.cursor()
+        cursor.execute("UPDATE urls SET number_of_uses = number_of_uses + 1 WHERE long_url = %s", (original_url,))
+        connection.commit()
+
         return redirect(original_url)
     return 'Shortened URL not found!', 404
 
@@ -198,36 +228,94 @@ def create_gui():
 
         connection = connect_db()
 
-        sql_select_query = "SELECT * FROM urls"
         cursor = connection.cursor()
-        cursor.execute(sql_select_query)
+        cursor.execute("SELECT * FROM urls")
 
         records = cursor.fetchall()
 
         ttk.Label(second_window, text="URLS:", font=("Helvetica", 20, "bold"), bootstyle=DANGER).pack(pady=17)
 
         for row in records:
-            ttk.Label(second_window, text=f"Original URl: {row[1]} | "
-                                          f"Shortened URL: http://127.0.0.1:9000/{row[2]} | "
-                                          f"Date of creation: {row[3]}",
+            original_url, short_code, date_of_creation, number_of_uses = row[1:]
+
+            ttk.Label(second_window, text=f"Original URl: {original_url} | "
+                                          f"Shortened URL: http://127.0.0.1:9000/{short_code} | "
+                                          f"Date of creation: {date_of_creation} | "
+                                          f"Number of uses: {number_of_uses}",
                       font=("Helvetica", 13), bootstyle=PRIMARY).pack(pady=10, padx=25)
+
+    def edit_short_code(original_url, new_short_code):
+        """
+        Updates the short code for a given URL.
+        """
+        if not original_url or not re.search(REGEX_FOR_VALIDATING_URL, original_url):
+            Messagebox.ok("Invalid URL format. Please enter a valid URL.", "Error")
+            return
+
+        if not new_short_code:
+            Messagebox.ok("Please enter a new short code.", "Error")
+            return
+
+        connection = connect_db()
+        cursor = connection.cursor()
+
+        try:
+            # Check if the original URL exists
+            cursor.execute("SELECT * FROM urls WHERE long_url = %s", (original_url,))
+            record = cursor.fetchone()
+
+            if not record:
+                Messagebox.ok("Original URL not found in records!", "Error")
+                return
+
+            # Check if the new short code is already in use
+            cursor.execute("SELECT * FROM urls WHERE short_url = %s", (new_short_code,))
+            if cursor.fetchone():
+                Messagebox.ok("This short code is already in use. Choose another.", "Error")
+                return
+
+            # Update the short code
+            cursor.execute("UPDATE urls SET short_url = %s WHERE long_url = %s", (new_short_code, original_url))
+            connection.commit()
+            Messagebox.ok("Short code updated successfully!", "Success")
+
+        except Exception as e:
+            Messagebox.ok(f"Error while updating short code: {str(e)}", "Error")
+
+        finally:
+            cursor.close()
+            connection.close()
 
     def show_user_panel():
         panel_window = Toplevel()
-        panel_window.title("User panel")
-        panel_window.geometry("300x220")
+        panel_window.title("User Panel")
+        panel_window.geometry("400x300")
 
-        ttk.Label(panel_window, text="User panel", font=("Helvetica", 20, "bold"), bootstyle=DANGER).pack(pady=20)
+        ttk.Label(panel_window, text="User Panel", font=("Helvetica", 20, "bold"), bootstyle=DANGER).pack(pady=20)
 
-        delete_url_entry = ttk.Entry(panel_window, bootstyle=INFO, width=30)
-        delete_url_entry.pack(pady=10)
+        # Entry for URL to delete/edit
+        url_entry = ttk.Entry(panel_window, bootstyle=INFO, width=30)
+        url_entry.pack(pady=5)
+        url_entry.insert(0, "Enter Original URL to Delete/Edit")
 
+        # Entry for new short code (for editing)
+        new_code_entry = ttk.Entry(panel_window, bootstyle=INFO, width=30)
+        new_code_entry.pack(pady=5)
+        new_code_entry.insert(0, "Enter New Short Code (Optional)")
+
+        # Delete button
         delete_url_button = ttk.Button(panel_window, text="DELETE", bootstyle=DANGER,
-                                       command=lambda: delete_url(delete_url_entry.get()))
-        delete_url_button.pack()
+                                       command=lambda: delete_url(url_entry.get()))
+        delete_url_button.pack(pady=10)
 
-        panel_preview_button = ttk.Button(panel_window, text="Preview", bootstyle=INFO, command=show_urls)
-        panel_preview_button.pack(pady=20)
+        # Edit button
+        edit_url_button = ttk.Button(panel_window, text="EDIT Short Code", bootstyle=INFO,
+                                     command=lambda: edit_short_code(url_entry.get(), new_code_entry.get()))
+        edit_url_button.pack(pady=10)
+
+        # Preview button
+        panel_preview_button = ttk.Button(panel_window, text="Preview URLs", bootstyle=INFO, command=show_urls)
+        panel_preview_button.pack(pady=10)
 
     def on_shorten_button_click():
         """
