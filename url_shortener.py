@@ -45,7 +45,7 @@ def hash_url(original_url, length_of_url):
     return hashlib.md5(original_url.encode()).hexdigest()[:length_of_url]  # The value of the slider (length_of_url)
 
 
-def save_url(original_url, short_url):
+def save_url(original_url, short_url, max_uses=None):
     conn = connect_db()
     cursor = conn.cursor()
 
@@ -56,8 +56,15 @@ def save_url(original_url, short_url):
         if result:
             return result[1]
         else:
-            cursor.execute("INSERT INTO urls (long_url, short_url, date_of_creation, number_of_uses) VALUES (%s, %s, NOW(), 0)",
-                           (original_url, short_url))
+            # Set max_uses to 0 (unlimited uses) if not provided
+            if max_uses is None:
+                max_uses = 0  # Unlimited uses by default
+
+            cursor.execute(
+                "INSERT INTO urls (long_url, short_url, date_of_creation, number_of_uses, max_uses) "
+                "VALUES (%s, %s, NOW(), 0, %s)",
+                (original_url, short_url, max_uses)
+            )
             conn.commit()
             return short_url
     except Exception as e:
@@ -84,8 +91,7 @@ def get_long_url(short_url):
         conn.close()
 
 
-def shorten_url(original_url, length_of_url, custom_code=None):
-    # Connect to the database
+def shorten_url(original_url, length_of_url, custom_code=None, max_uses=None):
     conn = connect_db()
     cursor = conn.cursor()
 
@@ -103,8 +109,8 @@ def shorten_url(original_url, length_of_url, custom_code=None):
         # If the URL does not exist, create a new short URL
         short_code = custom_code if custom_code else hash_url(original_url, length_of_url)
 
-        # Save the new URL and short code to the database
-        save_url(original_url, short_code)
+        # Save the new URL and short code to the database with max_uses
+        save_url(original_url, short_code, max_uses)
 
         return f'http://127.0.0.1:9000/{short_code}'
 
@@ -126,10 +132,20 @@ def redirect_to_url(short_code):
     if original_url:
         connection = connect_db()
         cursor = connection.cursor()
-        cursor.execute("UPDATE urls SET number_of_uses = number_of_uses + 1 WHERE long_url = %s", (original_url,))
-        connection.commit()
 
-        return redirect(original_url)
+        cursor.execute("SELECT number_of_uses, max_uses FROM urls WHERE short_url = %s", (short_code,))
+        result = cursor.fetchone()
+
+        if result:
+            number_of_uses, max_uses = result
+            if max_uses != 0 and number_of_uses >= max_uses:
+                return "This shortened URL has reached its maximum number of uses.", 403
+
+            cursor.execute("UPDATE urls SET number_of_uses = number_of_uses + 1 WHERE short_url = %s", (short_code,))
+            connection.commit()
+
+            return redirect(original_url)
+
     return 'Shortened URL not found!', 404
 
 
@@ -144,7 +160,7 @@ def create_gui():
     """
     window = ttk.Window(themename="superhero")
     window.title("URL Shortener")
-    window.geometry("500x500")
+    window.geometry("500x555")
 
     ttk.Label(window, text="Enter a URL to shorten:", font=("Helvetica", 22), bootstyle=DANGER).pack(pady=10)
     url_entry = ttk.Entry(window, width=50)
@@ -183,7 +199,7 @@ def create_gui():
                 input_path += ".png"
 
             get_code = pyqrcode.create(short_url)
-            get_code.png(input_path, scale=5)
+            get_code.png(input_path, scale=4)
 
             global get_image
             get_image = ImageTk.PhotoImage(Image.open(input_path))
@@ -323,6 +339,14 @@ def create_gui():
         """
         original_url = url_entry.get()
 
+        max_uses_input = max_uses_entry.get().strip()
+
+        if max_uses_input and not max_uses_input.isdigit():
+            Messagebox.show_error("Input Error", "Please enter a valid number for max uses.")
+            return
+
+        max_uses = int(max_uses_input) if max_uses_input else None
+
         if re.search(REGEX_FOR_VALIDATING_URL, original_url):  # Check if the URL given is valid
             custom_code = custom_code_entry.get().strip()
             length_of_url = floor(length_scale.get())
@@ -335,14 +359,15 @@ def create_gui():
                 return
 
             # Generate short URL using custom code if provided, otherwise generate a hashed short URL
-            generated_short_url = shorten_url(original_url, length_of_url, custom_code if custom_code else None)
+            generated_short_url = shorten_url(original_url, length_of_url, custom_code if custom_code else None,
+                                              max_uses)
             short_url_label.config(text=f"Short URL: {generated_short_url}")
 
             # Ask to generate a QR code
             if Messagebox.yesno("QR Code", "Would you like to generate a QR code of the URL?") == "Yes":
                 create_qr_code(generated_short_url)
             else:
-                window.geometry("500x500")
+                window.geometry("500x525")
         else:
             Messagebox.show_error("Input Error", "Please enter a valid URL.")
 
@@ -353,6 +378,10 @@ def create_gui():
 
     length_label = ttk.Label(window, text=f"{length_scale.get()}")  # To show the value that the slider is currently on.
     length_label.pack()
+
+    ttk.Label(window, text="Max Number of Uses (Optional):", bootstyle=INFO).pack(pady=5)
+    max_uses_entry = ttk.Entry(window, width=50)
+    max_uses_entry.pack(pady=5)
 
     shorten_button = ttk.Button(window, text="Shorten URL", command=on_shorten_button_click)
     shorten_button.pack(pady=20)
