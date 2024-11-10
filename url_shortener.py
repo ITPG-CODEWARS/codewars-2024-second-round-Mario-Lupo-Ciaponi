@@ -3,20 +3,17 @@ from datetime import datetime
 from math import floor
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
-from ttkbootstrap.dialogs import Messagebox
+from tkinter import messagebox
 from ttkbootstrap.window import Toplevel
 from tkinter import filedialog
 from PIL import Image, ImageTk
 import mysql.connector
-from flask import Flask, redirect
+from flask import Flask, redirect, request, render_template_string
 import threading
 import pyperclip
 import pyqrcode
 import png
 import re
-from tkcalendar import Calendar
-
-
 
 # Flask app for URL redirection
 app = Flask(__name__)
@@ -25,6 +22,15 @@ REGEX_FOR_VALIDATING_URL = (r"(https:\/\/www\.|http:\/\/www\.|https:\/\/|http:\/
                             r"(\.[a-zA-Z]{2,})?\/[a-zA-Z0-9]{2,}|((https:\/\/www\.|http:\/\/www\.|https:\/\/|http:\/\/)"
                             r"?[a-zA-Z]{2,}(\.[a-zA-Z]{2,})(\.[a-zA-Z]{2,})?)|(https:\/\/www\.|http:\/\/www\.|https:\/\
                             /|http:\/\/)?[a-zA-Z0-9]{2,}\.[a-zA-Z0-9]{2,}\.[a-zA-Z0-9]{2,}(\.[a-zA-Z0-9]{2,})?")
+
+
+password_form = '''
+    <form action="" method="post">
+        <p>Password required to access this URL:</p>
+        <input type="password" name="password" />
+        <button type="submit">Submit</button>
+    </form>
+'''
 
 
 def connect_db():
@@ -48,38 +54,38 @@ def hash_url(original_url, length_of_url):
     return hashlib.md5(original_url.encode()).hexdigest()[:length_of_url]  # The value of the slider (length_of_url)
 
 
-def save_url(original_url, short_url, max_uses=None, due_date=None):
+def save_url(original_url, short_url, max_uses=None, due_date=None, password=None):
+    """
+    Saves information about the URL in the database.
+    """
     conn = connect_db()
     cursor = conn.cursor()
 
     try:
-        # Check if the short URL already exists
         cursor.execute("SELECT * FROM urls WHERE short_url = %s", (short_url,))
         result = cursor.fetchone()
         if result:
             return result[1]
         else:
-            # Set max_uses to 0 (unlimited uses) if not provided
-            if max_uses is None:
-                max_uses = 0  # Unlimited uses by default
-
-            # Insert the URL with the optional due_date
+            max_uses = max_uses if max_uses is not None else 0
             cursor.execute(
-                "INSERT INTO urls (long_url, short_url, date_of_creation, number_of_uses, max_uses, due_date) "
-                "VALUES (%s, %s, NOW(), 0, %s, %s)",
-                (original_url, short_url, max_uses, due_date)
+                "INSERT INTO urls (long_url, short_url, date_of_creation, number_of_uses, max_uses, due_date, password) "
+                "VALUES (%s, %s, NOW(), 0, %s, %s, %s)",
+                (original_url, short_url, max_uses, due_date, password)
             )
             conn.commit()
             return short_url
     except Exception as e:
-        Messagebox.ok("Error", f"Could not save URL: {str(e)}")
+        messagebox.showerror("Error", f"Could not save URL: {str(e)}")
     finally:
         cursor.close()
         conn.close()
 
 
-
 def get_long_url(short_url):
+    """
+    Gets long URL.
+    """
     conn = connect_db()
     cursor = conn.cursor()
 
@@ -90,13 +96,16 @@ def get_long_url(short_url):
     except TypeError:
         pass
     except Exception as e:
-        Messagebox.ok("Error", f"Could not fetch URL: {str(e)}")
+        messagebox.showerror("Error", f"Could not fetch URL: {str(e)}")
     finally:
         cursor.close()
         conn.close()
 
 
-def shorten_url(original_url, length_of_url, custom_code=None, max_uses=None, due_date=None):
+def shorten_url(original_url, length_of_url, custom_code=None, max_uses=None, due_date=None, password=None):
+    """
+    Shortens the URL
+    """
     conn = connect_db()
     cursor = conn.cursor()
 
@@ -108,60 +117,88 @@ def shorten_url(original_url, length_of_url, custom_code=None, max_uses=None, du
         # If the URL exists, return the existing short URL
         if result:
             existing_short_url = result[0]
-            Messagebox.ok("URL already exists!", f"Short URL: http://127.0.0.1:9000/{existing_short_url}")
+            messagebox.showinfo("URL already exists!", f"Short URL: http://127.0.0.1:9000/{existing_short_url}")
             return f'http://127.0.0.1:9000/{existing_short_url}'
 
         # If the URL does not exist, create a new short URL
         short_code = custom_code if custom_code else hash_url(original_url, length_of_url)
 
-        # Save the new URL and short code to the database with max_uses and due_date
-        save_url(original_url, short_code, max_uses, due_date)
+        # Save the new URL and short code to the database with max_uses, due_date, and password
+        save_url(original_url, short_code, max_uses, due_date, password)
 
         return f'http://127.0.0.1:9000/{short_code}'
 
     except Exception as e:
-        Messagebox.ok("Error", f"Error while shortening URL: {str(e)}")
+        messagebox.showerror("Error", f"Error while shortening URL: {str(e)}")
 
     finally:
         cursor.close()
         conn.close()
 
 
-
-@app.route('/<short_code>')
+@app.route('/<short_code>', methods=["GET", "POST"])
 def redirect_to_url(short_code):
+    """
+    When the shortened URL is used, it will redirect to the original URL.
+    """
     if not short_code:
         return "Short code not provided!", 400
 
-    original_url = get_long_url(short_code)
+    connection = connect_db()
+    cursor = connection.cursor()
 
-    if original_url:
-        connection = connect_db()
-        cursor = connection.cursor()
+    cursor.execute("SELECT long_url, password, number_of_uses, max_uses, due_date FROM urls WHERE short_url = %s", (short_code,))
+    result = cursor.fetchone()
+    cursor.close()
+    connection.close()
 
-        cursor.execute("SELECT number_of_uses, max_uses, due_date FROM urls WHERE short_url = %s", (short_code,))
-        result = cursor.fetchone()
+    if result:
+        original_url, password, number_of_uses, max_uses, due_date = result
 
-        if result:
-            number_of_uses, max_uses, due_date = result
-            # Check if the URL has expired
-            if due_date and datetime.now() > due_date:
-                return "This shortened URL has expired.", 403
+        # Check for expiry
+        if due_date and datetime.now() > due_date:
+            return "This shortened URL has expired.", 403
 
-            if max_uses != 0 and number_of_uses >= max_uses:
-                return "This shortened URL has reached its maximum number of uses.", 403
+        # Check for max uses
+        if max_uses != 0 and number_of_uses >= max_uses:
+            return "This shortened URL has reached its maximum number of uses.", 403
 
+        # Password protection
+        if password:
+            if request.method == "POST":
+                # Validate the submitted password
+                submitted_password = request.form.get("password")
+                if submitted_password == password:
+                    # Update usage count in the database
+                    connection = connect_db()
+                    cursor = connection.cursor()
+                    cursor.execute("UPDATE urls SET number_of_uses = number_of_uses + 1 WHERE short_url = %s", (short_code,))
+                    connection.commit()
+                    cursor.close()
+                    connection.close()
+                    return redirect(original_url)
+                else:
+                    return "Incorrect password. Please try again.", 403
+            else:
+                # Show password form if GET request
+                return render_template_string(password_form)
+        else:
+            # No password required, redirect immediately
+            connection = connect_db()
+            cursor = connection.cursor()
             cursor.execute("UPDATE urls SET number_of_uses = number_of_uses + 1 WHERE short_url = %s", (short_code,))
             connection.commit()
-
+            cursor.close()
+            connection.close()
             return redirect(original_url)
 
     return 'Shortened URL not found!', 404
 
 
-
-
 def run_flask():
+    """
+    It runs the flask.
+    """
     app.run(debug=False, use_reloader=False, port=9000)
 
 
@@ -172,19 +209,11 @@ def create_gui():
     """
     window = ttk.Window(themename="superhero")
     window.title("URL Shortener")
-    window.geometry("500x650")
+    window.geometry("500x750")
 
     ttk.Label(window, text="Enter a URL to shorten:", font=("Helvetica", 22), bootstyle=DANGER).pack(pady=10)
     url_entry = ttk.Entry(window, width=50)
     url_entry.pack(pady=10)
-
-    ttk.Label(window, text="Custom Short Code (Optional):", bootstyle=INFO).pack(pady=5)
-    custom_code_entry = ttk.Entry(window, width=50)
-    custom_code_entry.pack(pady=5)
-
-    ttk.Label(window, text="Due Date (Optional):", bootstyle=ttk.INFO).pack(pady=5)
-    due_date_entry = ttk.Entry(window, width=50)
-    due_date_entry.pack(pady=10)
 
     def slider(e):
         """
@@ -192,15 +221,27 @@ def create_gui():
         """
         length_label.config(text=f"{floor(length_scale.get())}")
 
+    ttk.Label(window, text="Length of URL address:", bootstyle=INFO).pack(pady=5)
+
+    length_scale = ttk.Scale(window, length=50, from_=5, to=10, value=5, bootstyle=INFO, command=slider)
+    length_scale.pack()
+
+    length_label = ttk.Label(window, text=f"{length_scale.get()}")  # To show the value that the slider is currently on.
+    length_label.pack(pady=10)
+
+    ttk.Label(window, text="Custom Short Code (Optional):", bootstyle=INFO).pack(pady=5)
+    custom_code_entry = ttk.Entry(window, width=50)
+    custom_code_entry.pack(pady=5)
+
     def copy_to_clipboard():
         """
         It copies the shortened URL to the clipboard.
         """
         if generated_short_url:
             pyperclip.copy(generated_short_url)
-            Messagebox.ok("Copied", "Short URL copied to clipboard!")
+            messagebox.showinfo("Copied", "Short URL copied to clipboard!")
         else:
-            Messagebox.ok("Copy Error", "No URL to copy. Please shorten a URL first.")
+            messagebox.showerror("Copy Error", "No URL to copy. Please shorten a URL first.")
 
     def create_qr_code(short_url):
         """
@@ -214,14 +255,17 @@ def create_gui():
                 input_path += ".png"
 
             get_code = pyqrcode.create(short_url)
-            get_code.png(input_path, scale=4)
+            get_code.png(input_path, scale=2)
 
             global get_image
             get_image = ImageTk.PhotoImage(Image.open(input_path))
             qr_code_label.config(image=get_image)
-            window.geometry("500x750")
+            window.geometry("500x850")
 
     def delete_url(url):
+        """
+        Deletes the URL from the Database.
+        """
         if url and re.search(REGEX_FOR_VALIDATING_URL, url):
             connection = connect_db()
             cursor = connection.cursor()
@@ -235,20 +279,20 @@ def create_gui():
                     # URL found, proceed with deletion
                     cursor.execute("DELETE FROM urls WHERE long_url = %s", (url,))
                     connection.commit()  # Commit the deletion
-                    Messagebox.ok("URL deleted successfully!", "Success")
+                    messagebox.showinfo("URL deleted successfully!", "Success")
                 else:
                     # URL not found in the records
-                    Messagebox.ok("No URL found in the records!", "Error")
+                    messagebox.showerror("No URL found in the records!", "Error")
 
             except Exception as e:
-                Messagebox.ok(f"Error while deleting URL: {str(e)}", "Error")
+                messagebox.showerror(f"Error while deleting URL: {str(e)}", "Error")
 
             finally:
                 # Ensure both cursor and connection are closed
                 cursor.close()
                 connection.close()
         else:
-            Messagebox.ok("Invalid URL format. Please enter a valid URL.", "Error")
+            messagebox.showerror("Invalid URL format. Please enter a valid URL.", "Error")
 
     def show_urls():
         """
@@ -267,26 +311,27 @@ def create_gui():
         ttk.Label(second_window, text="URLS:", font=("Helvetica", 20, "bold"), bootstyle=DANGER).pack(pady=17)
 
         for row in records:
-            original_url, short_code, date_of_creation, number_of_uses, max_uses, date_of_experiment = row[1:]
+            original_url, short_code, date_of_creation, number_of_uses, max_uses, date_of_experiment, password = row[1:]
 
             ttk.Label(second_window, text=f"Original URl: {original_url} | "
                                           f"Shortened URL: http://127.0.0.1:9000/{short_code} | "
                                           f"Date of creation: {date_of_creation} | "
-                                          f"Due date: {date_of_experiment}"
+                                          f"Due date: {date_of_experiment} |"
                                           f"Number of uses: {number_of_uses} | "
-                                          f"Max nuber of uses: {max_uses if max_uses else 'Unlimited'}",
-                      font=("Helvetica", 13), bootstyle=PRIMARY).pack(pady=10, padx=25)
+                                          f"Max nuber of uses: {max_uses if max_uses else 'Unlimited'} | "
+                                          f"Password: {password}",
+                      font=("Helvetica", 9), bootstyle=PRIMARY).pack(pady=10, padx=25)
 
     def edit_short_code(original_url, new_short_code):
         """
         Updates the short code for a given URL.
         """
         if not original_url or not re.search(REGEX_FOR_VALIDATING_URL, original_url):
-            Messagebox.ok("Invalid URL format. Please enter a valid URL.", "Error")
+            messagebox.showerror("Invalid URL format. Please enter a valid URL.", "Error")
             return
 
         if not new_short_code:
-            Messagebox.ok("Please enter a new short code.", "Error")
+            messagebox.showerror("Please enter a new short code.", "Error")
             return
 
         connection = connect_db()
@@ -298,28 +343,31 @@ def create_gui():
             record = cursor.fetchone()
 
             if not record:
-                Messagebox.ok("Original URL not found in records!", "Error")
+                messagebox.showinfo("Original URL not found in records!", "Error")
                 return
 
             # Check if the new short code is already in use
             cursor.execute("SELECT * FROM urls WHERE short_url = %s", (new_short_code,))
             if cursor.fetchone():
-                Messagebox.ok("This short code is already in use. Choose another.", "Error")
+                messagebox.showinfo("This short code is already in use. Choose another.", "Error")
                 return
 
             # Update the short code
             cursor.execute("UPDATE urls SET short_url = %s WHERE long_url = %s", (new_short_code, original_url))
             connection.commit()
-            Messagebox.ok("Short code updated successfully!", "Success")
+            messagebox.showinfo("Short code updated successfully!", "Success")
 
         except Exception as e:
-            Messagebox.ok(f"Error while updating short code: {str(e)}", "Error")
+            messagebox.showinfo(f"Error while updating short code: {str(e)}", "Error")
 
         finally:
             cursor.close()
             connection.close()
 
     def show_user_panel():
+        """
+        Shows the URL pannel with different options.
+        """
         panel_window = Toplevel()
         panel_window.title("User Panel")
         panel_window.geometry("500x300")
@@ -358,7 +406,7 @@ def create_gui():
 
         # Check if the entered URL is valid
         if not original_url:
-            Messagebox.show_error("Input Error", "Please enter a valid URL.")
+            messagebox.showerror("Input Error", "Please enter a valid URL.")
             return
 
         # Get the due date from the Entry widget (validate the date format)
@@ -372,13 +420,13 @@ def create_gui():
             else:
                 due_date = None
         except ValueError:
-            Messagebox.show_error("Date Format Error", "Please enter a valid date (YYYY-MM-DD).")
+            messagebox.showerror("Date Format Error", "Please enter a valid date (YYYY-MM-DD).")
             return
 
         # Now handle max uses (if applicable)
         max_uses_input = max_uses_entry.get().strip()
         if max_uses_input and not max_uses_input.isdigit():
-            Messagebox.show_error("Input Error", "Please enter a valid number for max uses.")
+            messagebox.showerror("Input Error", "Please enter a valid number for max uses.")
             return
 
         max_uses = int(max_uses_input) if max_uses_input else None
@@ -389,28 +437,31 @@ def create_gui():
 
         # Generate the shortened URL using the shorten_url function
         global generated_short_url
-        generated_short_url = shorten_url(original_url, length_of_url, custom_code if custom_code else None,
-                                          max_uses, due_date)
+        password = password_entry.get().strip() if password_entry.get().strip() else None
+        generated_short_url = shorten_url(original_url, length_of_url,
+                                          custom_code if custom_code else None, max_uses, due_date, password)
 
         short_url_label.config(text=f"Short URL: {generated_short_url}")
 
         # Ask to generate a QR code
-        if Messagebox.yesno("QR Code", "Would you like to generate a QR code of the URL?") == "Yes":
+        if messagebox.askyesno("QR Code", "Would you like to generate a QR code of the URL?") == "Yes":
             create_qr_code(generated_short_url)
         else:
-            window.geometry("500x650")
+            window.geometry("500x750")
 
-    ttk.Label(window, text="Length of URL address:", bootstyle=INFO).pack(pady=5)
-
-    length_scale = ttk.Scale(window, length=50, from_=5, to=10, value=5, bootstyle=INFO, command=slider)
-    length_scale.pack()
-
-    length_label = ttk.Label(window, text=f"{length_scale.get()}")  # To show the value that the slider is currently on.
-    length_label.pack()
 
     ttk.Label(window, text="Max Number of Uses (Optional):", bootstyle=INFO).pack(pady=5)
     max_uses_entry = ttk.Entry(window, width=50)
     max_uses_entry.pack(pady=5)
+
+    ttk.Label(window, text="Due Date (Optional):", bootstyle=ttk.INFO).pack(pady=5)
+    due_date_entry = ttk.Entry(window, width=50)
+    due_date_entry.pack(pady=10)
+    due_date_entry.insert(0, "YYYY-MM-DD")
+
+    ttk.Label(window, text="Password (Optional):", bootstyle=INFO).pack(pady=5)
+    password_entry = ttk.Entry(window, width=50, show="*")  # Use show="*" for password masking
+    password_entry.pack(pady=5)
 
     shorten_button = ttk.Button(window, text="Shorten URL", command=on_shorten_button_click)
     shorten_button.pack(pady=20)
