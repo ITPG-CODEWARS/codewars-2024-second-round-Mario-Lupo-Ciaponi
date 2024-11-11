@@ -153,6 +153,7 @@ def save_url(original_url, short_url, max_uses=None, due_date=None, password=Non
             (original_url, short_url, max_uses, due_date, password)
         )
         conn.commit()
+        messagebox.showinfo("Url saved", "URL created!")
         ASK_TO_GENERATE_QR = True
         return short_url
 
@@ -206,7 +207,7 @@ def shorten_url(original_url, length_of_url, custom_code=None, max_uses=None, du
         result = cursor.fetchone()
         if result:
             existing_short_url = result[0]
-            messagebox.showinfo("URL already exists!", f"Short URL: {URL}{existing_short_url}")
+            messagebox.showinfo("URL already exists!", f"Short URL already exists: {URL}{existing_short_url}")
             return f'{URL}{existing_short_url}'
 
         # If no URL or custom code exists, generate a new short URL
