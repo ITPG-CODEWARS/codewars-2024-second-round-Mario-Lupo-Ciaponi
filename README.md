@@ -40,7 +40,7 @@ The preview page shows all teh information about the URLs including:
 
 ## User panel:
 
-### Entries:
+### Inputs:
 - First entry lets the user type THE ORIGINAL URL that he/she wants to delete or edit;
 - Second entry lets the user type the short code that he/she wants to edit.
 

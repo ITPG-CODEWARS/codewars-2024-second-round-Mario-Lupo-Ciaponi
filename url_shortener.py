@@ -41,7 +41,6 @@ def run_flask():
     """
     app.run(debug=False, use_reloader=False, port=9000)
 
-
 @app.route('/<short_code>', methods=["GET", "POST"])
 def redirect_to_url(short_code):
     """
@@ -75,13 +74,8 @@ def redirect_to_url(short_code):
                 # Validate the submitted password
                 submitted_password = request.form.get("password")
                 if submitted_password == password:
-                    # Update usage count in the database
-                    connection = connect_db()
-                    cursor = connection.cursor()
-                    cursor.execute("UPDATE urls SET number_of_uses = number_of_uses + 1 WHERE short_url = %s", (short_code,))
-                    connection.commit()
-                    cursor.close()
-                    connection.close()
+                    # Update usage count and redirect
+                    increment_usage_count(short_code)
                     return redirect(original_url)
                 else:
                     return "Incorrect password. Please try again.", 403
@@ -89,16 +83,23 @@ def redirect_to_url(short_code):
                 # Show password form if GET request
                 return render_template_string(password_form)
         else:
-            # No password required, redirect immediately
-            connection = connect_db()
-            cursor = connection.cursor()
-            cursor.execute("UPDATE urls SET number_of_uses = number_of_uses + 1 WHERE short_url = %s", (short_code,))
-            connection.commit()
-            cursor.close()
-            connection.close()
+            # No password required, increment count and redirect
+            increment_usage_count(short_code)
             return redirect(original_url)
 
     return 'Shortened URL not found!', 404
+
+
+def increment_usage_count(short_code):
+    """
+    Increments the usage count for a given short code.
+    """
+    connection = connect_db()
+    cursor = connection.cursor()
+    cursor.execute("UPDATE urls SET number_of_uses = number_of_uses + 1 WHERE short_url = %s", (short_code,))
+    connection.commit()
+    cursor.close()
+    connection.close()
 
 
 def connect_db():
