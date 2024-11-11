@@ -16,6 +16,7 @@ import re
 
 
 URL = "http://127.0.0.1:9000/"
+ASK_TO_GENERATE_QR = False
 
 # Flask app for URL redirection
 app = Flask(__name__)
@@ -40,6 +41,7 @@ def run_flask():
     Starts up flask.
     """
     app.run(debug=False, use_reloader=False, port=9000)
+
 
 @app.route('/<short_code>', methods=["GET", "POST"])
 def redirect_to_url(short_code):
@@ -131,19 +133,29 @@ def save_url(original_url, short_url, max_uses=None, due_date=None, password=Non
     cursor = conn.cursor()
 
     try:
+        # Check if the short URL (custom code) already exists in the database
         cursor.execute("SELECT * FROM urls WHERE short_url = %s", (short_url,))
+        if cursor.fetchone():
+            messagebox.showerror("Error", "This custom code is already in use. Please choose a different code.")
+            return None  # Indicate failure to save due to duplicate code
+
+        # Check if the original URL already exists to avoid duplicates
+        cursor.execute("SELECT * FROM urls WHERE long_url = %s", (original_url,))
         result = cursor.fetchone()
         if result:
-            return result[1]
-        else:
-            max_uses = max_uses if max_uses is not None else 0
-            cursor.execute(
-                "INSERT INTO urls (long_url, short_url, date_of_creation, number_of_uses, max_uses, due_date, password) "
-                "VALUES (%s, %s, NOW(), 0, %s, %s, %s)",
-                (original_url, short_url, max_uses, due_date, password)
-            )
-            conn.commit()
-            return short_url
+            return result[1]  # Return the existing short URL
+
+        # Insert the new URL, ensuring max_uses defaults to 0 if None
+        max_uses = max_uses if max_uses is not None else 0
+        cursor.execute(
+            "INSERT INTO urls (long_url, short_url, date_of_creation, number_of_uses, max_uses, due_date, password) "
+            "VALUES (%s, %s, NOW(), 0, %s, %s, %s)",
+            (original_url, short_url, max_uses, due_date, password)
+        )
+        conn.commit()
+        ASK_TO_GENERATE_QR = True
+        return short_url
+
     except Exception as e:
         messagebox.showerror("Error", f"Could not save URL: {str(e)}")
     finally:
@@ -173,23 +185,31 @@ def get_long_url(short_url):
 
 def shorten_url(original_url, length_of_url, custom_code=None, max_uses=None, due_date=None, password=None):
     """
-    Shortens the URL
+    Shortens the URL, using the custom code if provided, else generating a hash-based short URL.
     """
     conn = connect_db()
     cursor = conn.cursor()
 
     try:
-        # Check if the original URL already exists in the database
+        # If a custom code is provided, check if it already exists in the database
+        if custom_code:
+            cursor.execute("SELECT short_url FROM urls WHERE short_url = %s", (custom_code,))
+            existing_result = cursor.fetchone()
+
+            # If the custom code exists, return an error message or ask for a new code
+            if existing_result:
+                messagebox.showerror("Error", "This custom short code is already in use. Please choose a different code.")
+                return None  # Exit here without proceeding
+
+        # If the URL already exists in the database, return the existing short URL
         cursor.execute("SELECT short_url FROM urls WHERE long_url = %s", (original_url,))
         result = cursor.fetchone()
-
-        # If the URL exists, return the existing short URL
         if result:
             existing_short_url = result[0]
             messagebox.showinfo("URL already exists!", f"Short URL: {URL}{existing_short_url}")
             return f'{URL}{existing_short_url}'
 
-        # If the URL does not exist, create a new short URL
+        # If no URL or custom code exists, generate a new short URL
         short_code = custom_code if custom_code else hash_url(original_url, length_of_url)
 
         # Save the new URL and short code to the database with max_uses, due_date, and password
@@ -199,7 +219,6 @@ def shorten_url(original_url, length_of_url, custom_code=None, max_uses=None, du
 
     except Exception as e:
         messagebox.showerror("Error", f"Error while shortening URL: {str(e)}")
-
     finally:
         cursor.close()
         conn.close()
@@ -412,8 +431,8 @@ def create_gui():
         original_url = url_entry.get()
 
         # Check if the user entered a URL.
-        if not original_url:
-            messagebox.showerror("Input Error", "Please enter a URL.")
+        if not original_url or not re.search(REGEX_FOR_VALIDATING_URL, original_url):
+            messagebox.showerror("Input Error", "Please a valid a URL.")
             return
 
         # Get the due date from the Entry widget (validate the date format)
@@ -450,11 +469,15 @@ def create_gui():
 
         short_url_label.config(text=f"Short URL: {generated_short_url}")
 
-        # Ask to generate a QR code
-        if messagebox.askyesno("QR Code", "Would you like to generate a QR code of the URL?"):
-            create_qr_code(generated_short_url)
-        else:
-            window.geometry("500x750")
+        global ASK_TO_GENERATE_QR
+        if ASK_TO_GENERATE_QR:
+            # Ask to generate a QR code
+            if messagebox.askyesno("QR Code", "Would you like to generate a QR code of the URL?"):
+                create_qr_code(generated_short_url)
+            else:
+                window.geometry("500x750")
+
+            ASK_TO_GENERATE_QR = False
 
     # The option, that the user can set how many times does the shortened link be valid.
     ttk.Label(window, text="Max Number of Uses (Optional):", bootstyle=INFO).pack(pady=5)
