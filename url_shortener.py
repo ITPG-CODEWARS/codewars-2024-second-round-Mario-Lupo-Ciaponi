@@ -319,9 +319,9 @@ def create_gui():
                 ttk.Label(second_window, text=f"Original URl: {original_url} | "
                                               f"Shortened URL: http://127.0.0.1:9000/{short_code} | "
                                               f"Date of creation: {date_of_creation} | "
-                                              f"Due date: {expiry_date} |"
+                                              f"Due date: {expiry_date} | "
                                               f"Number of uses: {number_of_uses} | "
-                                              f"Max nuber of uses: {max_uses if max_uses else 'Unlimited'} | "
+                                              f"Max number of uses: {max_uses if max_uses else 'Unlimited'} | "
                                               f"Password: {password}",
                           font=("Helvetica", 9), bootstyle=PRIMARY).pack(pady=10, padx=25)
         else:
