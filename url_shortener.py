@@ -12,8 +12,10 @@ from flask import Flask, redirect, request, render_template_string
 import threading
 import pyperclip
 import pyqrcode
-import png
 import re
+
+
+URL = "http://127.0.0.1:9000/"
 
 # Flask app for URL redirection
 app = Flask(__name__)
@@ -31,6 +33,72 @@ password_form = '''
         <button type="submit">Submit</button>
     </form>
 '''
+
+
+def run_flask():
+    """
+    Starts up flask.
+    """
+    app.run(debug=False, use_reloader=False, port=9000)
+
+
+@app.route('/<short_code>', methods=["GET", "POST"])
+def redirect_to_url(short_code):
+    """
+    When the shortened URL is used, it will redirect to the original URL.
+    """
+    if not short_code:
+        return "Short code not provided!", 400
+
+    connection = connect_db()
+    cursor = connection.cursor()
+
+    cursor.execute("SELECT long_url, password, number_of_uses, max_uses, due_date FROM urls WHERE short_url = %s", (short_code,))
+    result = cursor.fetchone()
+    cursor.close()
+    connection.close()
+
+    if result:
+        original_url, password, number_of_uses, max_uses, due_date = result
+
+        # Check for expiry
+        if due_date and datetime.now() > due_date:
+            return "This shortened URL has expired.", 403
+
+        # Check for max uses
+        if max_uses != 0 and number_of_uses >= max_uses:
+            return "This shortened URL has reached its maximum number of uses.", 403
+
+        # Password protection
+        if password:
+            if request.method == "POST":
+                # Validate the submitted password
+                submitted_password = request.form.get("password")
+                if submitted_password == password:
+                    # Update usage count in the database
+                    connection = connect_db()
+                    cursor = connection.cursor()
+                    cursor.execute("UPDATE urls SET number_of_uses = number_of_uses + 1 WHERE short_url = %s", (short_code,))
+                    connection.commit()
+                    cursor.close()
+                    connection.close()
+                    return redirect(original_url)
+                else:
+                    return "Incorrect password. Please try again.", 403
+            else:
+                # Show password form if GET request
+                return render_template_string(password_form)
+        else:
+            # No password required, redirect immediately
+            connection = connect_db()
+            cursor = connection.cursor()
+            cursor.execute("UPDATE urls SET number_of_uses = number_of_uses + 1 WHERE short_url = %s", (short_code,))
+            connection.commit()
+            cursor.close()
+            connection.close()
+            return redirect(original_url)
+
+    return 'Shortened URL not found!', 404
 
 
 def connect_db():
@@ -117,8 +185,8 @@ def shorten_url(original_url, length_of_url, custom_code=None, max_uses=None, du
         # If the URL exists, return the existing short URL
         if result:
             existing_short_url = result[0]
-            messagebox.showinfo("URL already exists!", f"Short URL: http://127.0.0.1:9000/{existing_short_url}")
-            return f'http://127.0.0.1:9000/{existing_short_url}'
+            messagebox.showinfo("URL already exists!", f"Short URL: {URL}{existing_short_url}")
+            return f'{URL}{existing_short_url}'
 
         # If the URL does not exist, create a new short URL
         short_code = custom_code if custom_code else hash_url(original_url, length_of_url)
@@ -126,7 +194,7 @@ def shorten_url(original_url, length_of_url, custom_code=None, max_uses=None, du
         # Save the new URL and short code to the database with max_uses, due_date, and password
         save_url(original_url, short_code, max_uses, due_date, password)
 
-        return f'http://127.0.0.1:9000/{short_code}'
+        return f'{URL}{short_code}'
 
     except Exception as e:
         messagebox.showerror("Error", f"Error while shortening URL: {str(e)}")
@@ -134,72 +202,6 @@ def shorten_url(original_url, length_of_url, custom_code=None, max_uses=None, du
     finally:
         cursor.close()
         conn.close()
-
-
-@app.route('/<short_code>', methods=["GET", "POST"])
-def redirect_to_url(short_code):
-    """
-    When the shortened URL is used, it will redirect to the original URL.
-    """
-    if not short_code:
-        return "Short code not provided!", 400
-
-    connection = connect_db()
-    cursor = connection.cursor()
-
-    cursor.execute("SELECT long_url, password, number_of_uses, max_uses, due_date FROM urls WHERE short_url = %s", (short_code,))
-    result = cursor.fetchone()
-    cursor.close()
-    connection.close()
-
-    if result:
-        original_url, password, number_of_uses, max_uses, due_date = result
-
-        # Check for expiry
-        if due_date and datetime.now() > due_date:
-            return "This shortened URL has expired.", 403
-
-        # Check for max uses
-        if max_uses != 0 and number_of_uses >= max_uses:
-            return "This shortened URL has reached its maximum number of uses.", 403
-
-        # Password protection
-        if password:
-            if request.method == "POST":
-                # Validate the submitted password
-                submitted_password = request.form.get("password")
-                if submitted_password == password:
-                    # Update usage count in the database
-                    connection = connect_db()
-                    cursor = connection.cursor()
-                    cursor.execute("UPDATE urls SET number_of_uses = number_of_uses + 1 WHERE short_url = %s", (short_code,))
-                    connection.commit()
-                    cursor.close()
-                    connection.close()
-                    return redirect(original_url)
-                else:
-                    return "Incorrect password. Please try again.", 403
-            else:
-                # Show password form if GET request
-                return render_template_string(password_form)
-        else:
-            # No password required, redirect immediately
-            connection = connect_db()
-            cursor = connection.cursor()
-            cursor.execute("UPDATE urls SET number_of_uses = number_of_uses + 1 WHERE short_url = %s", (short_code,))
-            connection.commit()
-            cursor.close()
-            connection.close()
-            return redirect(original_url)
-
-    return 'Shortened URL not found!', 404
-
-
-def run_flask():
-    """
-    It runs the flask.
-    """
-    app.run(debug=False, use_reloader=False, port=9000)
 
 
 # Ttkbootstrap GUI
@@ -308,19 +310,23 @@ def create_gui():
 
         records = cursor.fetchall()
 
-        ttk.Label(second_window, text="URLS:", font=("Helvetica", 20, "bold"), bootstyle=DANGER).pack(pady=17)
+        if records:
+            ttk.Label(second_window, text="URLS:", font=("Helvetica", 20, "bold"), bootstyle=DANGER).pack(pady=17)
 
-        for row in records:
-            original_url, short_code, date_of_creation, number_of_uses, max_uses, date_of_experiment, password = row[1:]
+            for row in records:
+                original_url, short_code, date_of_creation, number_of_uses, max_uses, expiry_date, password = row[1:]
 
-            ttk.Label(second_window, text=f"Original URl: {original_url} | "
-                                          f"Shortened URL: http://127.0.0.1:9000/{short_code} | "
-                                          f"Date of creation: {date_of_creation} | "
-                                          f"Due date: {date_of_experiment} |"
-                                          f"Number of uses: {number_of_uses} | "
-                                          f"Max nuber of uses: {max_uses if max_uses else 'Unlimited'} | "
-                                          f"Password: {password}",
-                      font=("Helvetica", 9), bootstyle=PRIMARY).pack(pady=10, padx=25)
+                ttk.Label(second_window, text=f"Original URl: {original_url} | "
+                                              f"Shortened URL: http://127.0.0.1:9000/{short_code} | "
+                                              f"Date of creation: {date_of_creation} | "
+                                              f"Due date: {expiry_date} |"
+                                              f"Number of uses: {number_of_uses} | "
+                                              f"Max nuber of uses: {max_uses if max_uses else 'Unlimited'} | "
+                                              f"Password: {password}",
+                          font=("Helvetica", 9), bootstyle=PRIMARY).pack(pady=10, padx=25)
+        else:
+            second_window.geometry("200x75")
+            ttk.Label(second_window, text="No Urls created", font=("Helvetica", 20, "bold"), bootstyle=DANGER).pack(pady=17)
 
     def edit_short_code(original_url, new_short_code):
         """
@@ -404,9 +410,9 @@ def create_gui():
         """
         original_url = url_entry.get()
 
-        # Check if the entered URL is valid
+        # Check if the user entered a URL.
         if not original_url:
-            messagebox.showerror("Input Error", "Please enter a valid URL.")
+            messagebox.showerror("Input Error", "Please enter a URL.")
             return
 
         # Get the due date from the Entry widget (validate the date format)
@@ -444,25 +450,27 @@ def create_gui():
         short_url_label.config(text=f"Short URL: {generated_short_url}")
 
         # Ask to generate a QR code
-        if messagebox.askyesno("QR Code", "Would you like to generate a QR code of the URL?") == "Yes":
+        if messagebox.askyesno("QR Code", "Would you like to generate a QR code of the URL?"):
             create_qr_code(generated_short_url)
         else:
             window.geometry("500x750")
 
-
+    # The option, that the user can set how many times does the shortened link be valid.
     ttk.Label(window, text="Max Number of Uses (Optional):", bootstyle=INFO).pack(pady=5)
     max_uses_entry = ttk.Entry(window, width=50)
     max_uses_entry.pack(pady=5)
 
-    ttk.Label(window, text="Due Date (Optional):", bootstyle=ttk.INFO).pack(pady=5)
+    # The option, that the user can set a due date that the shortened link be valid.
+    ttk.Label(window, text="Due Date (Optional):", bootstyle=INFO).pack(pady=5)
     due_date_entry = ttk.Entry(window, width=50)
     due_date_entry.pack(pady=10)
-    due_date_entry.insert(0, "YYYY-MM-DD")
 
+    # The option, that the user can set a password before accessing the shortened URL.
     ttk.Label(window, text="Password (Optional):", bootstyle=INFO).pack(pady=5)
     password_entry = ttk.Entry(window, width=50, show="*")  # Use show="*" for password masking
     password_entry.pack(pady=5)
 
+    # Shortens URL.
     shorten_button = ttk.Button(window, text="Shorten URL", command=on_shorten_button_click)
     shorten_button.pack(pady=20)
 
@@ -472,15 +480,19 @@ def create_gui():
     short_url_label = ttk.Label(window, text="Short URL: 'No URL generated'")
     short_url_label.pack(pady=10)
 
+    # Copies URL to clipboard.
     copy_url_button = ttk.Button(window, text="Copy URL", bootstyle=INFO, command=copy_to_clipboard)
     copy_url_button.pack()
 
+    # Sees all the URLs in the database
     preview_button = ttk.Button(window, text="Preview", bootstyle=INFO, command=show_urls)
     preview_button.pack(pady=20)
 
+    # A button that opens the user panel
     user_panel_button = ttk.Button(window, text="User panel", bootstyle=INFO, command=show_user_panel)
     user_panel_button.pack()
 
+    # Hire will be generated the QR code
     qr_code_label = ttk.Label(window, text="")
     qr_code_label.pack(pady=20)
 
