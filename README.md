@@ -29,7 +29,7 @@ Short Code Length: Set the length (5–10 characters) of the generated short cod
 - User panel: Opens a user panel window with options to delete URLs, edit short codes, or view existing URLs.
 
 ## Preview page:
-The preview page shows all teh information about the URLs including: 
+The preview page shows all the information about the URLs including: 
 - Original URL;
 - Shortened URL;
 - Date of creation;
@@ -70,8 +70,23 @@ The app need to be started from the one and only python file in it 'url_shortene
 
 ### Additional Services:
 MySQL Database: A MySQL server is required, with a url_shortener database configured. 
-The database must have a URLs table with fields matching those used in the code (such as long_url, short_url, date_of_creation, 
+The database must have an urls table with fields matching those used in the code (such as long_url, short_url, date_of_creation, 
 number_of_uses, max_uses, due_date, password).
+
+#### MySQL Database Schema
+Below is the recommended schema for the `urls` table:
+
+| Field              | Data Type                        | Description                                                 |
+|--------------------|----------------------------------|-------------------------------------------------------------|
+| `id`               | INT, Primary Key, AUTO_INCREMENT | Unique identifier for each shortened URL.                   |
+| `long_url`         | VARCHAR(2048)                    | The original URL that will be shortened.                    |
+| `short_url`        | VARCHAR(255)                     | The shortened version of the URL or custom short code.      |
+| `date_of_creation` | TIMESTAMP                        | Timestamp when the shortened URL was created.               |
+| `number_of_uses`   | INT                              | Tracks the number of times the shortened URL has been used. |
+| `max_uses`         | INT                              | Maximum allowed uses before expiration.                     |
+| `due_date`         | DATE                             | Expiration date for the shortened URL.                      |
+| `password`         | VARCHAR(255)                     | (Optional) Password required for accessing the URL.         |
+
 
 ### Environment Setup:
 Flask App Configuration: The Flask app runs on http://127.0.0.1:9000. Make sure no other services are using this port when running the code.
