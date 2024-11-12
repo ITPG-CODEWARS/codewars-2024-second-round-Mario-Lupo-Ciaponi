@@ -81,7 +81,7 @@ Below is the recommended schema for the `urls` table:
 | `id`               | INT, Primary Key, AUTO_INCREMENT | Unique identifier for each shortened URL.                   |
 | `long_url`         | VARCHAR(2048)                    | The original URL that will be shortened.                    |
 | `short_url`        | VARCHAR(255)                     | The shortened version of the URL or custom short code.      |
-| `date_of_creation` | NOW()                            | Timestamp when the shortened URL was created.               |
+| `date_of_creation` | DATETIME                         | Timestamp when the shortened URL was created.               |
 | `number_of_uses`   | INT                              | Tracks the number of times the shortened URL has been used. |
 | `max_uses`         | INT                              | Maximum allowed uses before expiration.                     |
 | `due_date`         | DATE                             | Expiration date for the shortened URL.                      |
